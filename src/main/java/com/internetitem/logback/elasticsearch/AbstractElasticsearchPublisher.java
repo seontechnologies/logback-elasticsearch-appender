@@ -14,6 +14,7 @@ import com.internetitem.logback.elasticsearch.writer.LoggerWriter;
 import com.internetitem.logback.elasticsearch.writer.StdErrWriter;
 
 import java.io.IOException;
+import java.io.StringWriter;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -40,6 +41,7 @@ public abstract class AbstractElasticsearchPublisher<T> implements Runnable {
 
 	private AbstractPropertyAndEncoder<T> indexPattern;
 	private JsonFactory jf;
+	private StringWriter temporaryWriter = new StringWriter();
 	private JsonGenerator jsonGenerator;
 
 	private ErrorReporter errorReporter;
@@ -61,7 +63,7 @@ public abstract class AbstractElasticsearchPublisher<T> implements Runnable {
 
 		this.jf = new JsonFactory();
 		this.jf.setRootValueSeparator(null);
-		this.jsonGenerator = jf.createGenerator(outputAggregator);
+		this.jsonGenerator = jf.createGenerator(temporaryWriter);
 
 		this.indexPattern = buildPropertyAndEncoder(context, new Property("<index>", settings.getIndex(), false));
 		this.propertyList = generatePropertyList(context, properties);
@@ -123,6 +125,20 @@ public abstract class AbstractElasticsearchPublisher<T> implements Runnable {
 
 				List<T> eventsCopy = null;
 				synchronized (lock) {
+					if (outputAggregator.hasPendingData()) {
+						if (!outputAggregator.sendData()) {
+							currentTry++;
+						} else {
+
+							continue;
+						}
+						if (currentTry > maxRetries) {
+							// Oh well, better luck next time
+							outputAggregator.clear();
+						} else {
+							continue;
+						}
+					}
 					if (!events.isEmpty()) {
 						eventsCopy = events;
 						events = new ArrayList<T>();
@@ -134,13 +150,6 @@ public abstract class AbstractElasticsearchPublisher<T> implements Runnable {
 							// all done
 							working = false;
 							return;
-						} else {
-							// Nothing new, must be a retry
-							if (currentTry > maxRetries) {
-								// Oh well, better luck next time
-								working = false;
-								return;
-							}
 						}
 					}
 				}
@@ -166,6 +175,9 @@ public abstract class AbstractElasticsearchPublisher<T> implements Runnable {
 			gen.writeRaw('\n');
 			serializeEvent(gen, event, propertyList);
 			gen.writeRaw('\n');
+			gen.flush();
+			outputAggregator.write(temporaryWriter.getBuffer().toString());
+			temporaryWriter.getBuffer().setLength(0);
 		}
 		gen.flush();
 	}

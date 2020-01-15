@@ -10,6 +10,10 @@ public class StdErrWriter implements SafeWriter {
 		// No-op
 	}
 
+	public void clear() {
+		// No-op
+	}
+
 	public boolean hasPendingData() {
 		return false;
 	}

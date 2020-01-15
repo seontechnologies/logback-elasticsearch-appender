@@ -4,7 +4,7 @@
 
     <groupId>com.internetitem</groupId>
     <artifactId>logback-elasticsearch-appender</artifactId>
-    <version>1.7-SNAPSHOT</version>
+    <version>1.7-SEON</version>
     <packaging>jar</packaging>
 
     <name>Logback Elasticsearch Appender</name>
