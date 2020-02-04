@@ -43,7 +43,6 @@ public class ElasticsearchAppenderTest {
 
     @Before
     public void setUp() {
-
         appender = new ElasticsearchAppender() {
             @Override
             protected ClassicElasticsearchPublisher buildElasticsearchPublisher() throws IOException {

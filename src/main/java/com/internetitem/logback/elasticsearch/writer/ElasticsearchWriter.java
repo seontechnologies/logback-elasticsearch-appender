@@ -16,6 +16,7 @@ import com.internetitem.logback.elasticsearch.util.ErrorReporter;
 
 public class ElasticsearchWriter implements SafeWriter {
 
+	private StringBuilder backupBuffer;
 	private StringBuilder sendBuffer;
 
 	private ErrorReporter errorReporter;
@@ -23,6 +24,7 @@ public class ElasticsearchWriter implements SafeWriter {
 	private Collection<HttpRequestHeader> headerList;
 
 	private boolean bufferExceeded;
+	private boolean backupBufferExceeded;
 
 	public ElasticsearchWriter(ErrorReporter errorReporter, Settings settings, HttpRequestHeaders headers) {
 		this.errorReporter = errorReporter;
@@ -32,19 +34,38 @@ public class ElasticsearchWriter implements SafeWriter {
 			: Collections.<HttpRequestHeader>emptyList();
 
 		this.sendBuffer = new StringBuilder();
+		this.backupBuffer = new StringBuilder();
 	}
 
 	public void write(char[] cbuf, int off, int len) {
+		if (!bufferExceeded && backupBuffer.length() > 0) {
+			errorReporter.logWarning("Illegal state");
+		}
 		if (bufferExceeded) {
+			if (backupBuffer.length() + len <= settings.getMaxQueueSize()) {
+				backupBuffer.append(cbuf, off, len);
+			} else if (!backupBufferExceeded) {
+				backupBufferExceeded = true;
+				errorReporter.logWarning("Backup queue maximum size exceeded - log messages will be dropped until successful request");
+			}
+			return;
+		}
+
+		if (sendBuffer.length() + len > settings.getMaxQueueSize()) {
+			if (!bufferExceeded) {
+				errorReporter.logWarning("Send queue maximum size exceeded - log messages will be collected in memory for now");
+			}
+			bufferExceeded = true;
+			if (backupBuffer.length() + len <= settings.getMaxQueueSize()) {
+				backupBuffer.append(cbuf, off, len);
+			} else if (!backupBufferExceeded) {
+				backupBufferExceeded = true;
+				errorReporter.logWarning("Backup queue maximum size exceeded - log messages will be dropped until successful request");
+			}
 			return;
 		}
 
 		sendBuffer.append(cbuf, off, len);
-
-		if (sendBuffer.length() >= settings.getMaxQueueSize()) {
-			errorReporter.logWarning("Send queue maximum size exceeded - log messages will be lost until the buffer is cleared");
-			bufferExceeded = true;
-		}
 	}
 
 	public void sendData() throws IOException {
@@ -86,15 +107,29 @@ public class ElasticsearchWriter implements SafeWriter {
 			urlConnection.disconnect();
 		}
 
+		updateBuffersOnSuccess();
+	}
+
+	public void clear() {
+		updateBuffersOnSuccess();
+	}
+
+	private void updateBuffersOnSuccess() {
 		sendBuffer.setLength(0);
-		if (bufferExceeded) {
-			errorReporter.logInfo("Send queue cleared - log messages will no longer be lost");
+		if (backupBuffer.length() > 0) {
+			sendBuffer.append(backupBuffer.toString());
+			errorReporter.logInfo("Backup queue cleared. " + backupBuffer.length() + " bytes moved to Send queue");
+			backupBuffer.setLength(0);
+			backupBufferExceeded = false;
+		}
+		if (bufferExceeded && sendBuffer.length() < settings.getMaxQueueSize()) {
+			errorReporter.logInfo("Send queue back in bounds (" + sendBuffer.length() + ") - log messages will no longer be lost or accumulated in memory");
 			bufferExceeded = false;
 		}
 	}
 
 	public boolean hasPendingData() {
-		return sendBuffer.length() != 0;
+		return sendBuffer.length() != 0 || backupBuffer.length() != 0;
 	}
 
 	private static String slurpErrors(HttpURLConnection urlConnection) {

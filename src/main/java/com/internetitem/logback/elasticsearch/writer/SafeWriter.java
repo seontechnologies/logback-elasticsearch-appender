@@ -8,5 +8,7 @@ public interface SafeWriter {
 
 	void sendData() throws IOException;
 
+	void clear();
+
 	boolean hasPendingData();
 }
